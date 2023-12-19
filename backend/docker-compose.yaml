@@ -1,0 +1,64 @@
+
+version: '3.9'
+networks:
+  app:
+    external: true
+
+services:
+  zitadel:
+    networks:
+      - 'app'
+    image: 'ghcr.io/zitadel/zitadel:v2.42.2'
+    command: 'start-from-init  --config /zitadel.yaml --steps /zitadel.yaml --masterkey "${ZITADEL_MASTERKEY}"'
+    environment:
+      - ZITADEL_DATABASE_COCKROACH_HOST=crdb
+      - ZITADEL_EXTERNALSECURE=false
+      - ZITADEL_EXTERNALSECURE=true
+      - ZITADEL_TLS_ENABLED=false
+    depends_on:
+      zitadel-init:
+        condition: 'service_completed_successfully'
+      crdb:
+        condition: 'service_healthy'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+      - "traefik.http.services.auth.loadbalancer.server.scheme=http"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls.certresolver=production"
+      - "traefik.http.routers.auth.rule=Host(`auth.dev.oneaccord.cc`)"
+
+  zitadel-init:
+    image: 'ghcr.io/zitadel/zitadel:v2.42.2'
+    command: 'init --config /zitadel.yaml'
+    depends_on:
+      crdb:
+        condition: 'service_healthy'
+    environment:
+      - ZITADEL_EXTERNALDOMAIN=auth.dev.oneaccord.cc
+      - ZITADEL_DATABASE_COCKROACH_HOST=crdb
+      - ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED=true
+      - ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED=false
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: '10s'
+      timeout: '5s'
+      retries: 5
+      start_period: '10s'
+
+  crdb:
+    restart: 'always'
+    networks:
+      - 'app'
+    image: 'cockroachdb/cockroach:v23.1.13'
+    command: 'start-single-node --insecure'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health?ready=1"]
+      interval: '10s'
+      timeout: '30s'
+      retries: 5
+      start_period: '20s'
+    ports:
+      - '9090:8080'
+      - '26257:26257'
+
